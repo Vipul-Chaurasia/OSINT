@@ -9,7 +9,7 @@ This file provides crucial instructions and project context for AI coding agents
   ```
 
 ## Execution Workflow (CRITICAL)
-Before running the main scraper, you **MUST** ensure the following services are active in this exact order:
+Before running the scrapers, you **MUST** ensure the following services are active in this exact order:
 
 1. **VPN Connection:**
    The scraper requires an active NordVPN connection.
@@ -23,20 +23,47 @@ Before running the main scraper, you **MUST** ensure the following services are 
    - Command to run: `cargo run --release`
    *Ensure this helper is running in the background before starting the Python scripts.*
 
-3. **Core Scraper Scripts:**
-   The main logic resides in `dorking_master/`. Always run them in this sequence:
-   - First, run `python dorking_master/create_session_pool.py` to create Playwright browser sessions.
-   - Second, run `python dorking_master/dork_scraper.py`. This is the final, most refined script that utilizes the sessions to perform the actual dorking.
-   
-   *(Note: `script.py`, `script1.py`, and `script2.py` inside `dorking_master/` are legacy/previous versions and should generally be ignored).*
+3. **Core Services (two standalone FastAPI apps):**
+
+   **URL discovery** — `dorking_master/` on port `8000`:
+   ```bash
+   python dorking_master/create_session_pool.py   # Google sessions (once)
+   python dorking_master/dork_scraper.py
+   ```
+
+   **Content extraction** — `content_scraper/` on port `8001`:
+   ```bash
+   python content_scraper/create_tiktok_session.py   # TikTok cookies (once, if needed)
+   python content_scraper/content_scraper.py
+   ```
+
+   **TikTok burner session:** Playwright login often gets TikTok `error_code 7` (bot detection). **Log in via real Chrome**, then import cookies:
+   ```bash
+   google-chrome --remote-debugging-port=9222 --user-data-dir="$HOME/.osint-tiktok-chrome" https://www.tiktok.com
+   # log in + 2FA + open comments in that window, then:
+   cd content_scraper
+   TIKTOK_SESSION_FILE=sessions/tiktok_burner.json OSINT_USE_PROXY=0 python import_tiktok_session_from_chrome.py
+   ```
+   Alternative: `OSINT_USE_PROXY=0 python create_tiktok_burner_session.py` (persistent Chrome profile, strips `--enable-automation`).
+   Scrape: `TIKTOK_SESSION_FILE=sessions/tiktok_burner.json OSINT_USE_PROXY=0 python content_scraper.py`
+
+   **TikTok comment debug screenshots:** API tasks save step PNGs to `content_scraper/Results/screenshots/{task_id}/{aweme_id}/` (enabled by default). Paths are listed in each result's `comment_debug.screenshots`. Set `OSINT_DEBUG_SCREENSHOTS=0` to disable.
+
+   **TikTok VPN-only (skip proxy):** If the local proxy pool triggers TikTok Verification, run with `OSINT_USE_PROXY=0` so Playwright uses NordVPN directly. Check `comment_debug.fetch_source: playwright_direct`.
+
+   **TikTok slider captcha:** Comment scrapes auto-try local slider solving (`OSINT_TIKTOK_CAPTCHA_SOLVE=1`). For reliable solves, set `CAPSOLVER_API_KEY` (CapSolver AntiTikTokTask). Check `comment_debug.captcha_solve_method` (`slider_bruteforce`, `capsolver`, or `failed`).
+
+   *(Note: `script.py`, `script1.py`, and `script2.py` inside `dorking_master/legacy_models/` are superseded versions).*
 
 ## Project Architecture
-- **`dorking_master/`**: **(The Main Brain)** This is the core intelligence engine containing the primary logic for executing Google dorks, automating browser sessions, and managing scraping workflows.
-- **`proxies/`**: **(Proxy Helper)** Dedicated support system managing proxy health and rotation. 
-- **`tools/`**: **(Experimental / Temporary)** A sandbox directory used for testing third-party open-source tools (e.g., Pagodo). It also houses legacy directories like `frontend/`, `backend/`, and `Reports/` that were associated with these external tools and are no longer actively used in the core workflow.
-- **`dorks.txt`**: A list of active Google dorks used by the scraper.
+- **`dorking_master/`**: Google dork URL discovery. Saves `Results/results_{task_id}.json` + `tasks.db` on port **8000**.
+- **`content_scraper/`**: Playwright content extraction (profiles, posts, comments). Saves `Results/content_{task_id}.json` + `tasks.db` on port **8001**. Accepts explicit `urls` or a dork `dork_task_id` (reads `dorking_master/Results/results_{id}.json`).
+- **`proxies/`**: Proxy pool manager (port `9595`).
+- **`tools/`**: Experimental third-party OSINT tools (sandbox).
+- **`dorks.txt`**: Active Google dorks list.
 
 ## Agent Guidelines & Conventions
-- **Modifying Core Logic:** All new scraping logic, playbooks, or browser automation strategies should be integrated into `dorking_master/dork_scraper.py` or its supporting modular files.
-- **Network Requests:** All scraping-related network requests must utilize the proxy manager to guarantee anonymity and avoid rate limits.
-- **Testing Tools:** When working in the `tools/` directory, thoroughly test the open-source logic before migrating the "useful brains" into the `dorking_master` component. Ask the user to review the temporary experiments before cleaning them up.
+- **dorking_master changes:** URL discovery, dork logic, `url_classifier.py` for canonical URLs from Google results.
+- **content_scraper changes:** Playwright adapters, content parsing, session cookies — do not import from `dorking_master`.
+- **Network Requests:** All scraping-related network requests must utilize the proxy manager (`127.0.0.1:9595`).
+- **Testing Tools:** Experiment in `tools/` first; migrate proven logic into the appropriate service after user review.

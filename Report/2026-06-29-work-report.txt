@@ -1,0 +1,145 @@
+Subject: OSINT Scraper — Daily Work Report (29 Jun 2026)
+
+To:      Project Lead
+From:    Development Team
+Date:    Monday, 29 June 2026
+Project: OSINT Social Media Scraper (/home/dorking/OSINT)
+
+------------------------------------------------------------------------
+
+Hi,
+
+Please find below a point-wise summary of today's work on the OSINT scraper
+pipeline.
+
+------------------------------------------------------------------------
+
+1. PHASE 1 — URL CANONICALIZATION (dorking_master/)
+
+   - Extended url_classifier.py with canonical URL logic for 22 social
+     platforms (canonicalize_url, derive_profile_url, sort_urls,
+     CANONICAL_DOMAINS).
+   - Integrated into dork_scraper.py — dork results now include:
+       * urls_sorted (platform -> category -> URLs)
+       * canonical_map
+       * target_urls (filtered by target_url_type)
+   - Added unit tests: dorking_master/tests/test_url_canonicalizer.py
+
+------------------------------------------------------------------------
+
+2. PHASE 2 — CONTENT SCRAPER, TOP 5 PLATFORMS (content_scraper/)
+
+   - Built Playwright-based content extraction for:
+       * Instagram  — profile, post, reel
+       * TikTok     — profile, video, live
+       * X          — profile, tweet
+       * Facebook   — profile, post, photo, video, reel
+       * LinkedIn   — profile, post, article, company
+   - Each adapter extracts full metadata + comments (max_comments configurable).
+   - Shared modules: fetcher.py, parsers.py, router.py, registry.py,
+     models.py, http_client.py
+
+------------------------------------------------------------------------
+
+3. STANDALONE CONTENT SCRAPER SERVICE
+
+   - Decoupled content scraping from dork scraper into its own FastAPI app
+     on port 8001.
+   - Dork scraper (dorking_master/dork_scraper.py) stays on port 8000 —
+     URL discovery only.
+   - Persistence:
+       * JSON:   content_scraper/Results/content_{task_id}.json
+       * SQLite: content_scraper/tasks.db
+   - Background job API:
+       * POST /api/scrape-content        — start scrape
+       * GET  /api/status/{task_id}      — poll progress
+       * GET  /api/tasks                 — list jobs
+       * GET  /api/content-capabilities  — supported platform matrix
+   - Docs: content_scraper/docs/api_reference.md, updated agents.md
+
+------------------------------------------------------------------------
+
+4. TIKTOK RUNTIME FIXES
+
+   - Rejected third-party tikwm.com API — Playwright-only approach adopted.
+   - Added tiktok_browser.py for in-page JSON extraction
+     (__UNIVERSAL_DATA_FOR_REHYDRATION__).
+   - Added create_tiktok_session.py — saves cookies to sessions/tiktok.json
+     (required; without cookies TikTok serves not-found page).
+   - Proxy timeout handling: direct fallback when proxy fails
+     (OSINT_ALLOW_DIRECT_FALLBACK=1).
+   - Playwright Chromium install step documented (playwright install chromium).
+
+------------------------------------------------------------------------
+
+5. DORK TASK -> CONTENT SCRAPER INTEGRATION (Today's Final Item)
+
+   - Problem: Large dork result files (e.g. 257 URLs) made manual URL copy
+     impractical.
+   - Solution: Pass dork task_id directly to content scraper.
+
+   New file: content_scraper/dork_loader.py
+     - Reads dorking_master/Results/results_{dork_task_id}.json
+     - Resolves URLs from urls_sorted -> urls_grouped -> target_urls (deduped)
+     - Optional target_type filter (e.g. "video", "profile")
+
+   API example:
+     curl -X POST http://localhost:8001/api/scrape-content \
+       -H "Content-Type: application/json" \
+       -d '{"dork_task_id": "e77dc530-4b7f-4f2b-8181-5c38c733c9be",
+            "target_type": "video"}'
+
+   - urls is now optional; either urls or dork_task_id (or both, merged)
+     required.
+   - Output JSON stores dork_task_id + dork_source metadata.
+   - SQLite tasks table extended with dork_task_id column.
+   - Env var: DORK_RESULTS_DIR (default: ../dorking_master/Results).
+   - Tests: content_scraper/tests/test_dork_loader.py (6 tests, all passing).
+
+------------------------------------------------------------------------
+
+6. CURRENT ARCHITECTURE (Two-Service Model)
+
+   Service                          Port   Role                          Output
+   -------------------------------  -----  ----------------------------  ---------------------------
+   dorking_master/                  8000   Google dork URL discovery     Results/results_{id}.json
+   content_scraper/                 8001   Profile/post/comment extract  Results/content_{id}.json
+   proxies/Auto_proxy_manager       9595   Proxy pool                    —
+
+   Prerequisite stack:
+     NordVPN -> proxy manager -> session pools (Google + TikTok) -> run services
+
+------------------------------------------------------------------------
+
+7. KNOWN LIMITATIONS / NEXT STEPS
+
+   - Content scrapers implemented for 5 of 22 platforms; remaining 17 pending.
+   - url_classifier.py duplicated in both services (no cross-import by design).
+   - Large dork tasks scrape sequentially in background — no parallel batching yet.
+   - TikTok remains sensitive to proxy quality and valid session cookies.
+
+------------------------------------------------------------------------
+
+8. FILES TOUCHED / CREATED TODAY
+
+   New:
+     - content_scraper/ (full service)
+     - content_scraper/dork_loader.py
+     - content_scraper/adapters/ (instagram, tiktok, x, facebook, linkedin)
+     - content_scraper/tests/test_dork_loader.py
+     - content_scraper/tests/test_content_parsers.py
+     - content_scraper/docs/api_reference.md
+
+   Modified:
+     - dorking_master/url_classifier.py
+     - dorking_master/dork_scraper.py
+     - agents.md
+
+------------------------------------------------------------------------
+
+Regards,
+Development Team
+
+------------------------------------------------------------------------
+Report generated: 29 June 2026
+Location: /home/dorking/OSINT/Report/
